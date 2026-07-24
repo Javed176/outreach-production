@@ -1,5 +1,9 @@
-.bash_history
-.bashrc
-user_storage_*
-.bash_history
-.bashrc
+# Ignore everything by default
+/*
+
+# Un-ignore specific project files and folders
+!.gitignore
+!portal.py
+!requirements.txt
+!.streamlit/
+!*.py
