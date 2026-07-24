@@ -181,8 +181,57 @@ if st.session_state.admin_view_unlocked and st.session_state.user_token == "jave
                     st.dataframe(df_users, use_container_width=True)
                 
                 user_list = [u["username"] for u in users_data] if users_data else []
-                st.markdown("#### 🛠️ Quick-Edit Control Panel")
-                selected_user = st.selectbox("Choose an Action or User Profile:", ["-- Select User --"] + user_list)
+                
+                st.markdown("---")
+                
+                # --- SECTION A: ADD NEW USER ---
+                st.markdown("#### ➕ Add New User Account")
+                with st.form("add_user_form", clear_on_submit=True):
+                    col_u1, col_u2 = st.columns(2)
+                    with col_u1:
+                        new_username = st.text_input("New Username:").strip()
+                    with col_u2:
+                        new_password = st.text_input("New Password:", type="password").strip()
+                    
+                    c_add1, c_add2, c_add3, c_add4 = st.columns(4)
+                    with c_add1:
+                        init_daily = st.number_input("Daily Cap:", min_value=1, value=100)
+                    with c_add2:
+                        init_hourly = st.number_input("Hourly Cap:", min_value=1, value=50)
+                    with c_add3:
+                        init_batch = st.number_input("Batch Emails:", min_value=1, value=10)
+                    with c_add4:
+                        init_cooldown = st.number_input("Cooldown (sec):", min_value=1, value=30)
+                    
+                    add_submit = st.form_submit_button("Create User Profile")
+                    
+                    if add_submit:
+                        if not new_username or not new_password:
+                            st.error("Please provide both a username and password.")
+                        elif new_username in user_list:
+                            st.error(f"User '{new_username}' already exists!")
+                        else:
+                            try:
+                                supabase.table("user_profiles").insert({
+                                    "username": new_username,
+                                    "password": new_password,
+                                    "daily_cap": init_daily,
+                                    "hourly_cap": init_hourly,
+                                    "batch_emails": init_batch,
+                                    "cooldown_sec": init_cooldown
+                                }).execute()
+                                
+                                log_audit_event(st.session_state.user_token, f"CREATED_USER_{new_username}")
+                                st.success(f"User '{new_username}' successfully created!")
+                                st.rerun()
+                            except Exception as ex:
+                                st.error(f"Failed to create user: {str(ex)}")
+
+                st.markdown("---")
+
+                # --- SECTION B: EDIT OR DELETE EXISTING USER ---
+                st.markdown("#### 🛠️ Edit Profile Limits or Delete Account")
+                selected_user = st.selectbox("Choose a User Profile:", ["-- Select User --"] + user_list)
                 
                 if selected_user and selected_user != "-- Select User --":
                     usr_info = next((u for u in users_data if u["username"] == selected_user), {})
@@ -194,15 +243,32 @@ if st.session_state.admin_view_unlocked and st.session_state.user_token == "jave
                         new_batch = st.number_input("Batch Size (emails per batch):", min_value=1, value=int(usr_info.get("batch_emails", 10)))
                         new_cooldown = st.number_input("Batch Cooldown (seconds):", min_value=1, value=int(usr_info.get("cooldown_sec", 30)))
                     
-                    if st.button("💾 Save Profile Limits"):
-                        supabase.table("user_profiles").update({
-                            "daily_cap": new_daily, 
-                            "hourly_cap": new_hourly,
-                            "batch_emails": new_batch,
-                            "cooldown_sec": new_cooldown
-                        }).eq("username", selected_user).execute()
-                        st.success(f"Profile limits & batch settings updated for '{selected_user}'!")
-                        st.rerun()
+                    col_save, col_del = st.columns([1, 1])
+                    
+                    with col_save:
+                        if st.button("💾 Save Profile Limits", use_container_width=True):
+                            supabase.table("user_profiles").update({
+                                "daily_cap": new_daily, 
+                                "hourly_cap": new_hourly,
+                                "batch_emails": new_batch,
+                                "cooldown_sec": new_cooldown
+                            }).eq("username", selected_user).execute()
+                            st.success(f"Profile limits updated for '{selected_user}'!")
+                            st.rerun()
+                            
+                    with col_del:
+                        if selected_user == "javed176":
+                            st.warning("⚠️ Master admin account cannot be deleted.")
+                        else:
+                            if st.button(f"🗑️ Delete '{selected_user}'", use_container_width=True, type="secondary"):
+                                try:
+                                    supabase.table("user_profiles").delete().eq("username", selected_user).execute()
+                                    log_audit_event(st.session_state.user_token, f"DELETED_USER_{selected_user}")
+                                    st.success(f"User '{selected_user}' deleted successfully.")
+                                    st.rerun()
+                                except Exception as ex:
+                                    st.error(f"Failed to delete user: {str(ex)}")
+
             except Exception as e:
                 st.error(f"Error loading admin profiles: {str(e)}")
 
