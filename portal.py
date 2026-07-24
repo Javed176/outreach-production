@@ -31,25 +31,25 @@ if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 if "user_token" not in st.session_state:
     st.session_state.user_token = None
-if "session_id" not in st.session_state:
-    st.session_state.session_id = str(uuid.uuid4())
+if "local_tab_id" not in st.session_state:
+    st.session_state.local_tab_id = str(uuid.uuid4())
 if "admin_view_unlocked" not in st.session_state:
     st.session_state.admin_view_unlocked = False
 
 st.title("运输 | Smart Carrier Outreach Engine (v3.0)")
 
-# --- SINGLE SESSION VALIDATOR ---
-if st.session_state.authenticated and supabase and st.session_state.user_token:
+# --- STRICT SINGLE ACTIVE SESSION GUARD ---
+if st.session_state.authenticated and st.session_state.user_token and supabase:
     try:
         check_res = supabase.table("user_profiles").select("session_id").eq("username", st.session_state.user_token).execute()
         if check_res.data and len(check_res.data) > 0:
             current_db_session = check_res.data[0].get("session_id")
-            if current_db_session and current_db_session != st.session_state.session_id:
+            if current_db_session and current_db_session != st.session_state.local_tab_id:
                 st.session_state.authenticated = False
                 st.session_state.user_token = None
-                st.session_state.session_id = str(uuid.uuid4())
-                st.warning("⚠️ You have been logged out because another browser tab or device logged into this account.")
-                st.rerun()
+                st.session_state.local_tab_id = str(uuid.uuid4())
+                st.error("⚠️ ACCOUNT DISCONNECTED: Someone logged into this account from another tab or PC.")
+                st.stop()
     except Exception:
         pass
 
@@ -134,14 +134,14 @@ if not st.session_state.authenticated:
                 try:
                     res = supabase.table("user_profiles").select("*").eq("username", username).eq("password", password).execute()
                     if res.data:
-                        new_session_id = str(uuid.uuid4())
+                        current_login_id = str(uuid.uuid4())
                         
-                        # Register session ID into Supabase database to enforce single active session
-                        supabase.table("user_profiles").update({"session_id": new_session_id}).eq("username", username).execute()
+                        # Register new session ID into Supabase to boot off any existing tab/PC immediately
+                        supabase.table("user_profiles").update({"session_id": current_login_id}).eq("username", username).execute()
                         
                         st.session_state.authenticated = True
                         st.session_state.user_token = username
-                        st.session_state.session_id = new_session_id
+                        st.session_state.local_tab_id = current_login_id
                         
                         log_audit_event(username, "LOGIN")
                         st.success("Access authorized successfully!")
@@ -315,7 +315,7 @@ with col_logout_btn:
     if st.button("🔒 Logout", use_container_width=True):
         log_audit_event(st.session_state.user_token, "LOGOUT")
         
-        # Clear session ID in database upon intentional logout
+        # Clear DB session_id upon logout
         if supabase and st.session_state.user_token:
             try:
                 supabase.table("user_profiles").update({"session_id": None}).eq("username", st.session_state.user_token).execute()
@@ -324,7 +324,7 @@ with col_logout_btn:
                 
         st.session_state.authenticated = False
         st.session_state.user_token = None
-        st.session_state.session_id = None
+        st.session_state.local_tab_id = str(uuid.uuid4())
         st.rerun()
 
 current_profile = {"daily_cap": 100, "hourly_cap": 50, "batch_emails": 10, "cooldown_sec": 30}
