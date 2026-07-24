@@ -6,7 +6,7 @@ import smtplib
 import json
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import pandas as pd
@@ -36,7 +36,7 @@ if "session_id" not in st.session_state:
 if "admin_view_unlocked" not in st.session_state:
     st.session_state.admin_view_unlocked = False
 
-st.title("运输 | Smart Carrier Outreach Engine (v2.9)")
+st.title("运输 | Smart Carrier Outreach Engine (v3.0)")
 
 # --- SINGLE SESSION VALIDATOR ---
 if st.session_state.authenticated and supabase:
@@ -160,7 +160,12 @@ if st.session_state.admin_view_unlocked and st.session_state.user_token == "jave
         st.session_state.admin_view_unlocked = False
         st.rerun()
         
-    tab1, tab_cfg, tab2 = st.tabs(["🔑 User Profiles & Limits", "📂 User Configurations & Templates", "🚫 Global Domain Blacklist"])
+    tab1, tab_stats, tab_cfg, tab2 = st.tabs([
+        "🔑 User Profiles & Limits", 
+        "📈 Email Analytics & Logs", 
+        "📂 User Configurations & Templates", 
+        "🚫 Global Domain Blacklist"
+    ])
     
     with tab1:
         st.markdown("#### 🔑 Active Database Profiles Overview")
@@ -179,15 +184,84 @@ if st.session_state.admin_view_unlocked and st.session_state.user_token == "jave
                 
                 if selected_user and selected_user != "-- Select User --":
                     usr_info = next((u for u in users_data if u["username"] == selected_user), {})
-                    new_daily = st.number_input("Max Daily Email Cap:", min_value=1, value=int(usr_info.get("daily_cap", 100)))
-                    new_hourly = st.number_input("Max Hourly Cap:", min_value=1, value=int(usr_info.get("hourly_cap", 50)))
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        new_daily = st.number_input("Max Daily Email Cap:", min_value=1, value=int(usr_info.get("daily_cap", 100)))
+                        new_hourly = st.number_input("Max Hourly Cap:", min_value=1, value=int(usr_info.get("hourly_cap", 50)))
+                    with c2:
+                        new_batch = st.number_input("Batch Size (emails per batch):", min_value=1, value=int(usr_info.get("batch_emails", 10)))
+                        new_cooldown = st.number_input("Batch Cooldown (seconds):", min_value=1, value=int(usr_info.get("cooldown_sec", 30)))
                     
                     if st.button("💾 Save Profile Limits"):
-                        supabase.table("user_profiles").update({"daily_cap": new_daily, "hourly_cap": new_hourly}).eq("username", selected_user).execute()
-                        st.success(f"Limits updated for '{selected_user}'!")
+                        supabase.table("user_profiles").update({
+                            "daily_cap": new_daily, 
+                            "hourly_cap": new_hourly,
+                            "batch_emails": new_batch,
+                            "cooldown_sec": new_cooldown
+                        }).eq("username", selected_user).execute()
+                        st.success(f"Profile limits & batch settings updated for '{selected_user}'!")
                         st.rerun()
             except Exception as e:
                 st.error(f"Error loading admin profiles: {str(e)}")
+
+    with tab_stats:
+        st.markdown("#### 📈 Analytics: Email Volume & Live Dispatch Logs")
+        if supabase:
+            try:
+                now = datetime.utcnow()
+                today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+                month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+                
+                # Fetch log data
+                logs_res = supabase.table("email_dispatch_logs").select("*").order("timestamp", desc=True).limit(500).execute().data
+                
+                if logs_res:
+                    df_logs = pd.DataFrame(logs_res)
+                    
+                    # Compute Today & Month stats per user
+                    df_logs["timestamp_dt"] = pd.to_datetime(df_logs["timestamp"])
+                    
+                    today_dt = pd.to_datetime(today_start)
+                    month_dt = pd.to_datetime(month_start)
+                    
+                    today_counts = df_logs[df_logs["timestamp_dt"] >= today_dt].groupby("operator_username").size().to_dict()
+                    month_counts = df_logs[df_logs["timestamp_dt"] >= month_dt].groupby("operator_username").size().to_dict()
+                    
+                    st.markdown("##### 📊 User Volume Summary")
+                    summary_rows = []
+                    all_ops = list(set(df_logs["operator_username"].dropna()))
+                    for op in all_ops:
+                        summary_rows.append({
+                            "Operator Username": op,
+                            "Emails Sent Today": today_counts.get(op, 0),
+                            "Emails Sent This Month": month_counts.get(op, 0)
+                        })
+                    st.dataframe(pd.DataFrame(summary_rows), use_container_width=True)
+                    
+                    st.markdown("---")
+                    st.markdown("##### 📜 Detailed Dispatch Audit Log (Which Sender -> Which Target & When)")
+                    
+                    # Filter option
+                    selected_op_filter = st.selectbox("Filter Logs by Operator:", ["All Operators"] + all_ops)
+                    
+                    display_df = df_logs.copy()
+                    if selected_op_filter != "All Operators":
+                        display_df = display_df[display_df["operator_username"] == selected_op_filter]
+                    
+                    # Rename columns for clean view
+                    display_cols = {
+                        "timestamp": "Timestamp (UTC)",
+                        "operator_username": "Operator",
+                        "sender_email": "Sender Email Used",
+                        "recipient_target": "Recipient Target",
+                        "status": "Status"
+                    }
+                    display_df = display_df[list(display_cols.keys())].rename(columns=display_cols)
+                    st.dataframe(display_df, use_container_width=True)
+                else:
+                    st.info("No email dispatch logs found yet.")
+            except Exception as e:
+                st.error(f"Error fetching analytics: {str(e)}")
 
     with tab_cfg:
         st.write("### 🔍 Cross-User Configuration Lookup")
@@ -267,6 +341,7 @@ st.sidebar.markdown("---")
 st.sidebar.metric("Emails Sent Today", f"{count_today} / {current_profile.get('daily_cap', 100)}")
 st.sidebar.write(f"🔹 **Hourly Limit:** `{current_profile.get('hourly_cap', 50)}` emails/hr.")
 st.sidebar.write(f"🔹 **Batch Size:** `{current_profile.get('batch_emails', 10)}` per run.")
+st.sidebar.write(f"🔹 **Batch Cooldown:** `{current_profile.get('cooldown_sec', 30)}` sec.")
 
 saved_blacklist_content = load_text_file(GLOBAL_BLACKLIST_FILE, "badbroker.com\ndontemail.com")
 blacklist = [line.strip().lower() for line in saved_blacklist_content.strip().split("\n") if line.strip()]
