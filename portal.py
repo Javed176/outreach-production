@@ -15,13 +15,18 @@ from supabase import create_client, Client
 # --- STAGE 0: STYLING & INITIALIZATION ---
 st.set_page_config(page_title="Multi-Account Outreach Portal", layout="wide")
 
-SUPABASE_URL = "https://dwylakegsqwroonielfi.supabase.co"
-SUPABASE_KEY = "sb_publishable_ePTChi0d9rQKpAOoXjtvzA_9hu-njiI"
+# Securely retrieve secrets set in Streamlit Cloud Dashboard
+SUPABASE_URL = st.secrets.get("supabase", {}).get("url", "")
+SUPABASE_KEY = st.secrets.get("supabase", {}).get("key", "")
+MASTER_ADMIN_USER = st.secrets.get("admin", {}).get("master_user", "javed176")
+MASTER_ADMIN_PWD = st.secrets.get("admin", {}).get("password", "")
 
 @st.cache_resource
 def init_supabase():
     try:
-        return create_client(SUPABASE_URL, SUPABASE_KEY)
+        if SUPABASE_URL and SUPABASE_KEY:
+            return create_client(SUPABASE_URL, SUPABASE_KEY)
+        return None
     except Exception:
         return None
 
@@ -155,7 +160,7 @@ if not st.session_state.authenticated:
     st.stop()
 
 # --- STAGE 2: ADMIN DASHBOARD ---
-if st.session_state.admin_view_unlocked and st.session_state.user_token == "javed176":
+if st.session_state.admin_view_unlocked and st.session_state.user_token == MASTER_ADMIN_USER:
     st.markdown("---")
     st.subheader("📊 Master Administrative & Audit Analytics Dashboard")
     if st.button("⬅️ Close Admin Panel & Return to Outreach"):
@@ -257,7 +262,7 @@ if st.session_state.admin_view_unlocked and st.session_state.user_token == "jave
                             st.rerun()
                             
                     with col_del:
-                        if selected_user == "javed176":
+                        if selected_user == MASTER_ADMIN_USER:
                             st.warning("⚠️ Master admin account cannot be deleted.")
                         else:
                             if st.button(f"🗑️ Delete '{selected_user}'", use_container_width=True, type="secondary"):
@@ -276,12 +281,10 @@ if st.session_state.admin_view_unlocked and st.session_state.user_token == "jave
         st.markdown("#### 🔐 User Login & Session Activity History")
         if supabase:
             try:
-                # Safely query audit logs
                 audit_res = supabase.table("audit_logs").select("*").execute().data
                 if audit_res:
                     df_audit = pd.DataFrame(audit_res)
                     
-                    # Detect timestamp column dynamically
                     time_col = None
                     for possible_col in ["created_at", "timestamp", "created_time", "date"]:
                         if possible_col in df_audit.columns:
@@ -307,7 +310,7 @@ if st.session_state.admin_view_unlocked and st.session_state.user_token == "jave
                 else:
                     st.info("No login or audit events recorded yet.")
             except Exception as e:
-                st.warning("⚠️ `audit_logs` table requires the `created_at` column. Run the SQL command in Step 1 to enable full login timestamp tracking.")
+                st.warning("⚠️ `audit_logs` table requires the `created_at` column.")
                 st.error(f"Details: {str(e)}")
 
         st.markdown("---")
@@ -318,7 +321,6 @@ if st.session_state.admin_view_unlocked and st.session_state.user_token == "jave
                 today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
                 month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
                 
-                # Fetch email log data
                 logs_res = supabase.table("email_dispatch_logs").select("*").order("timestamp", desc=True).limit(500).execute().data
                 
                 if logs_res:
@@ -404,13 +406,15 @@ if st.session_state.admin_view_unlocked and st.session_state.user_token == "jave
 # --- STAGE 3: APPLICATION RUNTIME ---
 col_dash_btn, col_logout_btn = st.columns([4, 1])
 with col_dash_btn:
-    if st.session_state.user_token == "javed176":
+    if st.session_state.user_token == MASTER_ADMIN_USER:
         with st.expander("🛠️ Admin Panel"):
             admin_pwd = st.text_input("Admin Password:", type="password").strip()
             if st.button("Unlock Admin Panel"):
-                if admin_pwd == "khan123khan":
+                if admin_pwd == MASTER_ADMIN_PWD:
                     st.session_state.admin_view_unlocked = True
                     st.rerun()
+                else:
+                    st.error("Invalid Admin Password")
     else:
         st.info(f"Operator Handle: `{st.session_state.user_token}`")
 
