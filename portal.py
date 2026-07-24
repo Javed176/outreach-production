@@ -276,19 +276,30 @@ if st.session_state.admin_view_unlocked and st.session_state.user_token == "jave
         st.markdown("#### 🔐 User Login & Session Activity History")
         if supabase:
             try:
-                # Fetch Login and Session Audit Logs from Supabase
-                audit_res = supabase.table("audit_logs").select("*").order("created_at", desc=True).limit(300).execute().data
+                # Dynamically fetch audit logs without forcing 'created_at' column name
+                audit_res = supabase.table("audit_logs").select("*").execute().data
                 if audit_res:
                     df_audit = pd.DataFrame(audit_res)
-                    if "created_at" in df_audit.columns:
-                        df_audit["created_at"] = pd.to_datetime(df_audit["created_at"], utc=True)
+                    
+                    # Auto-detect timestamp column in your table
+                    time_col = None
+                    for possible_col in ["created_at", "timestamp", "created_time", "date"]:
+                        if possible_col in df_audit.columns:
+                            time_col = possible_col
+                            break
+                    
+                    if time_col:
+                        df_audit[time_col] = pd.to_datetime(df_audit[time_col], utc=True)
+                        df_audit = df_audit.sort_values(by=time_col, ascending=False)
                         
                     audit_cols_map = {
-                        "created_at": "Login Date & Time (UTC)",
+                        time_col: "Login Date & Time (UTC)" if time_col else "Timestamp",
                         "username": "User",
                         "event_type": "Action / Event"
                     }
-                    display_audit_df = df_audit[[c for c in audit_cols_map.keys() if c in df_audit.columns]].rename(columns=audit_cols_map)
+                    
+                    available_cols = [c for c in audit_cols_map.keys() if c in df_audit.columns and c is not None]
+                    display_audit_df = df_audit[available_cols].rename(columns=audit_cols_map)
                     st.dataframe(display_audit_df, use_container_width=True)
                 else:
                     st.info("No login or audit events recorded yet.")
