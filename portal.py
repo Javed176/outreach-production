@@ -27,6 +27,7 @@ def init_supabase():
 
 supabase = init_supabase()
 
+# Initialize session state variables
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 if "user_token" not in st.session_state:
@@ -38,20 +39,28 @@ if "admin_view_unlocked" not in st.session_state:
 
 st.title("运输 | Smart Carrier Outreach Engine (v3.0)")
 
-# --- STRICT SINGLE ACTIVE SESSION GUARD ---
-if st.session_state.authenticated and st.session_state.user_token and supabase:
-    try:
-        check_res = supabase.table("user_profiles").select("session_id").eq("username", st.session_state.user_token).execute()
-        if check_res.data and len(check_res.data) > 0:
-            current_db_session = check_res.data[0].get("session_id")
-            if current_db_session and current_db_session != st.session_state.local_tab_id:
-                st.session_state.authenticated = False
-                st.session_state.user_token = None
-                st.session_state.local_tab_id = str(uuid.uuid4())
-                st.error("⚠️ ACCOUNT DISCONNECTED: Someone logged into this account from another tab or PC.")
-                st.stop()
-    except Exception:
-        pass
+# --- STRICT REAL-TIME SINGLE ACTIVE SESSION GUARD ---
+def verify_single_session():
+    if st.session_state.authenticated and st.session_state.user_token and supabase:
+        try:
+            check_res = supabase.table("user_profiles").select("session_id").eq("username", st.session_state.user_token).execute()
+            if check_res.data and len(check_res.data) > 0:
+                current_db_session = check_res.data[0].get("session_id")
+                # If DB session_id is different from this local tab's session_id, log out immediately
+                if current_db_session and current_db_session != st.session_state.local_tab_id:
+                    st.session_state.authenticated = False
+                    st.session_state.user_token = None
+                    st.session_state.campaign_running = False
+                    st.session_state.local_tab_id = str(uuid.uuid4())
+                    return False
+        except Exception:
+            pass
+    return True
+
+# Enforce check on top-level script execution
+if not verify_single_session():
+    st.error("⚠️ ACCOUNT DISCONNECTED: Someone logged into this account from another tab, device, or PC.")
+    st.stop()
 
 # --- CONFIGURATION FILE STORAGE UTILITIES ---
 GLOBAL_BLACKLIST_FILE = "global_blacklist_config.txt"
@@ -129,14 +138,14 @@ if not st.session_state.authenticated:
         submit_btn = st.form_submit_button("Verify & Unlock Engine")
         
         if submit_btn:
-            time.sleep(0.5)
+            time.sleep(0.3)
             if supabase:
                 try:
                     res = supabase.table("user_profiles").select("*").eq("username", username).eq("password", password).execute()
                     if res.data:
                         current_login_id = str(uuid.uuid4())
                         
-                        # Register new session ID into Supabase to boot off any existing tab/PC immediately
+                        # Overwrite active session_id in Supabase. Any other tab/PC logged in under this username will be booted on its next frame/action.
                         supabase.table("user_profiles").update({"session_id": current_login_id}).eq("username", username).execute()
                         
                         st.session_state.authenticated = True
@@ -214,13 +223,10 @@ if st.session_state.admin_view_unlocked and st.session_state.user_token == "jave
                 today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
                 month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
                 
-                # Fetch log data
                 logs_res = supabase.table("email_dispatch_logs").select("*").order("timestamp", desc=True).limit(500).execute().data
                 
                 if logs_res:
                     df_logs = pd.DataFrame(logs_res)
-                    
-                    # Convert timestamps with timezone matching (UTC)
                     df_logs["timestamp_dt"] = pd.to_datetime(df_logs["timestamp"], utc=True)
                     today_dt = pd.to_datetime(today_start, utc=True)
                     month_dt = pd.to_datetime(month_start, utc=True)
@@ -315,7 +321,7 @@ with col_logout_btn:
     if st.button("🔒 Logout", use_container_width=True):
         log_audit_event(st.session_state.user_token, "LOGOUT")
         
-        # Clear DB session_id upon logout
+        # Clear DB session_id on logout
         if supabase and st.session_state.user_token:
             try:
                 supabase.table("user_profiles").update({"session_id": None}).eq("username", st.session_state.user_token).execute()
@@ -436,6 +442,11 @@ ticker_anchor = st.empty()
 
 # --- CAMPAIGN ENGINE ---
 if st.session_state.campaign_running:
+    # Double check session before dispatching
+    if not verify_single_session():
+        st.error("⚠️ SESSION TERMINATED: Account was accessed from another tab or PC.")
+        st.stop()
+
     can_send, today_total = check_user_daily_limit(st.session_state.user_token, current_profile.get("daily_cap", 100))
     if not can_send:
         st.session_state.campaign_running = False
@@ -452,6 +463,9 @@ if st.session_state.campaign_running:
             st.session_state.batch_counter = 0  
             cooldown_duration = int(current_profile.get("cooldown_sec", 30))
             for remaining in range(cooldown_duration, 0, -1):
+                if not verify_single_session():
+                    st.error("⚠️ SESSION TERMINATED: Account logged in elsewhere.")
+                    st.stop()
                 with ticker_anchor.container():
                     st.info(f"⏳ **Batch Cooldown Active...** ({remaining}s remaining)")
                 time.sleep(1)
@@ -484,6 +498,9 @@ if st.session_state.campaign_running:
         if st.session_state.target_idx < len(extracted_targets):
             next_delay = random.randint(min_delay, max_delay)
             for countdown in range(next_delay, 0, -1):
+                if not verify_single_session():
+                    st.error("⚠️ SESSION TERMINATED: Account logged in elsewhere.")
+                    st.stop()
                 with ticker_anchor.container():
                     st.warning(f"🕒 **Delay Pipeline Active:** Next email in {countdown}s...")
                 time.sleep(1)
