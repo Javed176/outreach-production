@@ -218,11 +218,10 @@ if st.session_state.admin_view_unlocked and st.session_state.user_token == "jave
                 if logs_res:
                     df_logs = pd.DataFrame(logs_res)
                     
-                    # Compute Today & Month stats per user
-                    df_logs["timestamp_dt"] = pd.to_datetime(df_logs["timestamp"])
-                    
-                    today_dt = pd.to_datetime(today_start)
-                    month_dt = pd.to_datetime(month_start)
+                    # Convert timestamps with timezone matching (UTC)
+                    df_logs["timestamp_dt"] = pd.to_datetime(df_logs["timestamp"], utc=True)
+                    today_dt = pd.to_datetime(today_start, utc=True)
+                    month_dt = pd.to_datetime(month_start, utc=True)
                     
                     today_counts = df_logs[df_logs["timestamp_dt"] >= today_dt].groupby("operator_username").size().to_dict()
                     month_counts = df_logs[df_logs["timestamp_dt"] >= month_dt].groupby("operator_username").size().to_dict()
@@ -241,14 +240,12 @@ if st.session_state.admin_view_unlocked and st.session_state.user_token == "jave
                     st.markdown("---")
                     st.markdown("##### 📜 Detailed Dispatch Audit Log (Which Sender -> Which Target & When)")
                     
-                    # Filter option
                     selected_op_filter = st.selectbox("Filter Logs by Operator:", ["All Operators"] + all_ops)
                     
                     display_df = df_logs.copy()
                     if selected_op_filter != "All Operators":
                         display_df = display_df[display_df["operator_username"] == selected_op_filter]
                     
-                    # Rename columns for clean view
                     display_cols = {
                         "timestamp": "Timestamp (UTC)",
                         "operator_username": "Operator",
