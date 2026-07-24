@@ -164,7 +164,7 @@ if st.session_state.admin_view_unlocked and st.session_state.user_token == "jave
         
     tab1, tab_stats, tab_cfg, tab2 = st.tabs([
         "🔑 User Profiles & Limits", 
-        "📈 Email Analytics & Logs", 
+        "📈 Email Analytics & Login Logs", 
         "📂 User Configurations & Templates", 
         "🚫 Global Domain Blacklist"
     ])
@@ -273,20 +273,42 @@ if st.session_state.admin_view_unlocked and st.session_state.user_token == "jave
                 st.error(f"Error loading admin profiles: {str(e)}")
 
     with tab_stats:
-        st.markdown("#### 📈 Analytics: Email Volume & Live Dispatch Logs")
+        st.markdown("#### 🔐 User Login & Session Activity History")
+        if supabase:
+            try:
+                # Fetch Login and Session Audit Logs from Supabase
+                audit_res = supabase.table("audit_logs").select("*").order("created_at", desc=True).limit(300).execute().data
+                if audit_res:
+                    df_audit = pd.DataFrame(audit_res)
+                    if "created_at" in df_audit.columns:
+                        df_audit["created_at"] = pd.to_datetime(df_audit["created_at"], utc=True)
+                        
+                    audit_cols_map = {
+                        "created_at": "Login Date & Time (UTC)",
+                        "username": "User",
+                        "event_type": "Action / Event"
+                    }
+                    display_audit_df = df_audit[[c for c in audit_cols_map.keys() if c in df_audit.columns]].rename(columns=audit_cols_map)
+                    st.dataframe(display_audit_df, use_container_width=True)
+                else:
+                    st.info("No login or audit events recorded yet.")
+            except Exception as e:
+                st.error(f"Error fetching audit logs: {str(e)}")
+
+        st.markdown("---")
+        st.markdown("#### 📈 Email Volume & Live Dispatch Logs")
         if supabase:
             try:
                 now = datetime.utcnow()
                 today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
                 month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
                 
-                # Fetch log data
+                # Fetch email log data
                 logs_res = supabase.table("email_dispatch_logs").select("*").order("timestamp", desc=True).limit(500).execute().data
                 
                 if logs_res:
                     df_logs = pd.DataFrame(logs_res)
                     
-                    # Convert timestamps with timezone matching (UTC)
                     df_logs["timestamp_dt"] = pd.to_datetime(df_logs["timestamp"], utc=True)
                     today_dt = pd.to_datetime(today_start, utc=True)
                     month_dt = pd.to_datetime(month_start, utc=True)
@@ -306,9 +328,9 @@ if st.session_state.admin_view_unlocked and st.session_state.user_token == "jave
                     st.dataframe(pd.DataFrame(summary_rows), use_container_width=True)
                     
                     st.markdown("---")
-                    st.markdown("##### 📜 Detailed Dispatch Audit Log (Which Sender -> Which Target & When)")
+                    st.markdown("##### 📜 Detailed Dispatch Audit Log")
                     
-                    selected_op_filter = st.selectbox("Filter Logs by Operator:", ["All Operators"] + all_ops)
+                    selected_op_filter = st.selectbox("Filter Dispatch Logs by Operator:", ["All Operators"] + all_ops)
                     
                     display_df = df_logs.copy()
                     if selected_op_filter != "All Operators":
@@ -326,7 +348,7 @@ if st.session_state.admin_view_unlocked and st.session_state.user_token == "jave
                 else:
                     st.info("No email dispatch logs found yet.")
             except Exception as e:
-                st.error(f"Error fetching analytics: {str(e)}")
+                st.error(f"Error fetching email analytics: {str(e)}")
 
     with tab_cfg:
         st.write("### 🔍 Cross-User Configuration Lookup")
