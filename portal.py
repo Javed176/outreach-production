@@ -136,7 +136,7 @@ if not st.session_state.authenticated:
                     if res.data:
                         current_login_id = str(uuid.uuid4())
                         
-                        # Register new session ID into Supabase to boot off any existing tab/PC immediately
+                        # Register new session ID into Supabase
                         supabase.table("user_profiles").update({"session_id": current_login_id}).eq("username", username).execute()
                         
                         st.session_state.authenticated = True
@@ -276,12 +276,12 @@ if st.session_state.admin_view_unlocked and st.session_state.user_token == "jave
         st.markdown("#### 🔐 User Login & Session Activity History")
         if supabase:
             try:
-                # Dynamically fetch audit logs without forcing 'created_at' column name
+                # Safely query audit logs
                 audit_res = supabase.table("audit_logs").select("*").execute().data
                 if audit_res:
                     df_audit = pd.DataFrame(audit_res)
                     
-                    # Auto-detect timestamp column in your table
+                    # Detect timestamp column dynamically
                     time_col = None
                     for possible_col in ["created_at", "timestamp", "created_time", "date"]:
                         if possible_col in df_audit.columns:
@@ -299,12 +299,16 @@ if st.session_state.admin_view_unlocked and st.session_state.user_token == "jave
                     }
                     
                     available_cols = [c for c in audit_cols_map.keys() if c in df_audit.columns and c is not None]
-                    display_audit_df = df_audit[available_cols].rename(columns=audit_cols_map)
-                    st.dataframe(display_audit_df, use_container_width=True)
+                    if available_cols:
+                        display_audit_df = df_audit[available_cols].rename(columns=audit_cols_map)
+                        st.dataframe(display_audit_df, use_container_width=True)
+                    else:
+                        st.dataframe(df_audit, use_container_width=True)
                 else:
                     st.info("No login or audit events recorded yet.")
             except Exception as e:
-                st.error(f"Error fetching audit logs: {str(e)}")
+                st.warning("⚠️ `audit_logs` table requires the `created_at` column. Run the SQL command in Step 1 to enable full login timestamp tracking.")
+                st.error(f"Details: {str(e)}")
 
         st.markdown("---")
         st.markdown("#### 📈 Email Volume & Live Dispatch Logs")
